@@ -311,10 +311,6 @@ class App {
         // Create modal dialog for help/info
         const backdrop = document.createElement('div');
         backdrop.className = 'dialog-backdrop show';
-        
-        // Convert markdown to HTML
-        const htmlContent = this.parseMarkdown(content);
-        
         backdrop.innerHTML = `
             <div class="dialog" style="max-width: 600px; max-height: 80vh; overflow-y: auto;">
                 <div class="dialog-header">
@@ -324,7 +320,7 @@ class App {
                     </button>
                 </div>
                 <div class="dialog-content">
-                    <div class="markdown-content">${htmlContent}</div>
+                    <div style="white-space: pre-wrap; line-height: 1.6;">${content}</div>
                 </div>
             </div>
         `;
@@ -351,45 +347,6 @@ class App {
             }
         };
         document.addEventListener('keydown', escapeHandler);
-    }
-
-    parseMarkdown(markdown) {
-        if (!markdown) return '';
-        
-        let html = markdown
-            // Headers
-            .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-            .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-            .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-            
-            // Bold and italic
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\*(.*?)\*/g, '<em>$1</em>')
-            
-            // Lists
-            .replace(/^\d+\. (.*$)/gim, '<li>$1</li>')
-            .replace(/^- (.*$)/gim, '<li>$1</li>')
-            
-            // Code
-            .replace(/`(.*?)`/g, '<code>$1</code>')
-            
-            // Line breaks
-            .replace(/\n\n/g, '</p><p>')
-            .replace(/\n/g, '<br>');
-        
-        // Wrap in paragraphs
-        html = '<p>' + html + '</p>';
-        
-        // Fix list formatting
-        html = html.replace(/<p><li>/g, '<ul><li>');
-        html = html.replace(/<\/li><\/p>/g, '</li></ul>');
-        html = html.replace(/<\/li><p><li>/g, '</li><li>');
-        
-        // Remove empty paragraphs
-        html = html.replace(/<p><\/p>/g, '');
-        html = html.replace(/<p><br><\/p>/g, '');
-        
-        return html;
     }
 
     closeAllDialogs() {
