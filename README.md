@@ -4,7 +4,7 @@ A modern resume generator built with Typst, featuring AI-powered content enhance
 
 ## Features
 
-- **Resume Generation**: Create professional resumes using Typst typesetting system
+- **Resume Generation**: Create professional resumes using Typst typesetting system (TODO)
 - **AI Assistant**: Content enhancement and sample data generation via Gemini API
 - **Multilingual**: Chinese and English interface support
 - **Modern UI**: Material Design 3 interface
