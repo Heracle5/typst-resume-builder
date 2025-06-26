@@ -1,17 +1,15 @@
-// Gemini API Integration Module
+// Gemini API Integration Module - Rebuilt for Stability and Clarity
+
 class GeminiAPI {
     constructor() {
         this.apiKey = localStorage.getItem('gemini-api-key') || '';
         this.models = [
-            // 'gemini-1.5-flash',
-            // 'gemini-2.0-flash',
-            // 'gemini-1.5-pro',
-            'gemini-2.5-flash'
+            'gemini-2.5-flash',
         ];
         this.currentModelIndex = 0;
-        this.baseURL = `https://generativelanguage.googleapis.com/v1beta/models/${this.models[this.currentModelIndex]}:generateContent`;
     }
 
+    // --- Configuration ---
     setApiKey(apiKey) {
         this.apiKey = apiKey;
         localStorage.setItem('gemini-api-key', apiKey);
@@ -25,199 +23,133 @@ class GeminiAPI {
         return !!this.apiKey;
     }
 
-    switchToNextModel() {
-        this.currentModelIndex = (this.currentModelIndex + 1) % this.models.length;
-        this.baseURL = `https://generativelanguage.googleapis.com/v1beta/models/${this.models[this.currentModelIndex]}:generateContent`;
-        console.log(`Switched to model: ${this.models[this.currentModelIndex]}`);
-    }
+    // --- Core API Request Logic ---
 
-    getCurrentModel() {
-        return this.models[this.currentModelIndex];
-    }
+    /**
+     * The core private method for making requests to the Gemini API.
+     * It handles model switching for retries and robust error handling.
+     * @param {string} prompt The prompt to send to the model.
+     * @param {object} options Additional options for the request.
+     * @param {boolean} [options.jsonOutput=false] Whether to request a JSON response.
+     * @param {number} [options.temperature=0.5] The temperature for generation.
+     * @param {number} [options.maxOutputTokens=2048] The max output tokens.
+     * @returns {Promise<string|object>} The response text or parsed JSON object.
+     * @private
+     */
+    async _makeRequest(prompt, options = {}) {
+        if (!this.hasApiKey()) {
+            throw new Error('API Key is required.');
+        }
 
-    async makeRequest(prompt, options = {}) {
-        if (!this.apiKey) {
-            throw new Error('API Key is required');
+        const generationConfig = {
+            temperature: options.temperature || 0.5,
+            topK: options.topK || 40,
+            topP: options.topP || 0.95,
+            maxOutputTokens: options.maxOutputTokens || 2048,
+        };
+        
+        if (options.jsonOutput) {
+            generationConfig.responseMimeType = 'application/json';
         }
 
         const requestBody = {
-            contents: [{
-                parts: [{
-                    text: prompt
-                }]
-            }],
-            generationConfig: {
-                temperature: options.temperature || 0.7,
-                topK: options.topK || 40,
-                topP: options.topP || 0.95,
-                maxOutputTokens: options.maxOutputTokens || 1024,
-            }
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig,
         };
 
         let lastError = null;
-        const maxRetries = this.models.length;
 
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
+        for (let i = 0; i < this.models.length; i++) {
+            const model = this.models[this.currentModelIndex];
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`;
+            
+            console.log(`尝试模型: ${model} (${i + 1}/${this.models.length})`);
+
             try {
-                console.log(`尝试模型: ${this.getCurrentModel()} (${attempt + 1}/${maxRetries})`);
-                
-                const response = await fetch(`${this.baseURL}?key=${this.apiKey}`, {
+                const response = await fetch(url, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody)
                 });
 
-                if (response.status !== 200) {
-                    console.log('Response status:', response.status, response.statusText);
-                }
-
                 if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    console.error('API error response:', errorData);
-                    lastError = new Error(`API request failed: ${response.status} ${response.statusText} - ${errorData.error?.message || 'Unknown error'}`);
-                    
-                    // Try next model if current one fails
-                    if (attempt < maxRetries - 1) {
-                        this.switchToNextModel();
-                        continue;
-                    }
-                    throw lastError;
+                    const errorBody = await response.text();
+                    throw new Error(`API request failed with status ${response.status}: ${errorBody}`);
                 }
 
                 const data = await response.json();
-                console.log(`模型 ${this.getCurrentModel()} 响应成功`);
                 
-                // Handle different response formats
-                if (data.candidates && data.candidates[0] && data.candidates[0].content) {
-                    return data.candidates[0].content.parts[0].text;
-                } else if (data.content && data.content.parts) {
-                    return data.content.parts[0].text;
-                } else if (data.text) {
-                    return data.text;
-                } else {
-                    console.error('Unexpected API response format:', data);
-                    lastError = new Error('Invalid response format from API');
+                // --- Robust Response Parsing ---
+                if (!data.candidates || data.candidates.length === 0) {
+                    // This can happen if the prompt is blocked entirely.
+                    const finishReason = data.promptFeedback?.blockReason || 'UNKNOWN_REASON';
+                    throw new Error(`API returned no candidates. Reason: ${finishReason}`);
+                }
+
+                const candidate = data.candidates[0];
+
+                if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+                    const finishReason = candidate.finishReason || 'UNKNOWN';
                     
-                    // Try next model if response format is invalid
-                    if (attempt < maxRetries - 1) {
-                        this.switchToNextModel();
-                        continue;
+                    // Specifically handle the "MAX_TOKENS" bug where content is empty.
+                    if (finishReason === 'MAX_TOKENS') {
+                        throw new Error(`模型错误: 请求因达到最大令牌数而停止，但未返回任何内容。这可能是个已知问题，请尝试简化您的请求或稍后重试。`);
                     }
-                    throw lastError;
+
+                    const safetyRatings = JSON.stringify(candidate.safetyRatings || {});
+                    throw new Error(`Candidate content is empty. Finish Reason: ${finishReason}. Safety Ratings: ${safetyRatings}`);
                 }
-            } catch (error) {
-                console.error(`Gemini API request failed with model ${this.getCurrentModel()}:`, error);
-                lastError = error;
+
+                const responseText = candidate.content.parts[0].text;
                 
-                // Try next model if request fails
-                if (attempt < maxRetries - 1) {
-                    this.switchToNextModel();
-                    continue;
+                if (options.jsonOutput) {
+                    try {
+                        // The API should return a valid JSON object in the text part.
+                        return JSON.parse(responseText);
+                    } catch (e) {
+                        console.error("无法解析来自API的JSON:", responseText, e);
+                        // Throw an error to allow for retry with the next model.
+                        throw new Error(`Invalid JSON response from model ${model}.`);
+                    }
                 }
-                break;
+                
+                return responseText; // Success, return the result.
+
+            } catch (error) {
+                console.error(`模型 ${model} 调用失败:`, error);
+                lastError = error;
+                // Switch to the next model for the next attempt
+                this.currentModelIndex = (this.currentModelIndex + 1) % this.models.length;
             }
         }
 
-        throw lastError || new Error('All models failed to respond');
+        // If all models failed, throw the last encountered error.
+        throw new Error(`所有模型都调用失败. Last error: ${lastError.message}`);
     }
 
+    // --- Public Methods ---
+
+    /**
+     * Generates complete sample resume data.
+     * @returns {Promise<object>} A complete resume data object.
+     */
     async generateSampleData() {
         const currentLang = i18n ? i18n.getCurrentLanguage() : 'zh-CN';
-        
-        const prompts = {
-            'zh-CN': `生成一个完整的中文简历示例数据，只返回JSON格式，包含：个人信息、教育背景、工作经历、项目经历、科研经历、技能特长。
-
-返回格式：
-{
-  "personal": {"name": "李明", "location": "北京, 中国", "email": "liming@example.com", "phone": "+86 138****5678", "github": "github.com/liming", "linkedin": "linkedin.com/in/liming", "website": "liming.dev", "pronouns": "他/他", "orcid": "0000-0000-0000-0000"},
-  "education": [{"institution": "清华大学", "degree": "计算机科学学士", "location": "北京, 中国", "startDate": "2020-09", "endDate": "2024-06", "gpa": "3.8/4.0", "description": "主修算法、数据结构等"}],
-  "work": [{"company": "字节跳动", "position": "实习工程师", "location": "北京, 中国", "startDate": "2023-07", "endDate": "2023-09", "description": "参与后端开发，优化系统性能"}],
-  "projects": [{"name": "智能推荐系统", "role": "核心开发", "url": "github.com/liming/recommend", "startDate": "2023-01", "endDate": "2023-05", "description": "使用Python和TensorFlow开发推荐算法"}],
-  "research": [{"title": "深度学习在推荐系统中的应用", "journal": "计算机学报", "authors": "李明, 张三", "date": "2024-03", "doi": "doi.org/10.1234/example", "description": "提出了新的深度学习模型"}],
-  "skills": "Python, Java, C++, TensorFlow, MySQL, Git"
-}
-
-请按上述格式返回一个完整的简历数据。`,
-            'en-US': `Generate complete English resume sample data, return only JSON format with: personal info, education, work experience, projects, research, skills.
-
-Format:
-{
-  "personal": {"name": "John Smith", "location": "San Francisco, CA", "email": "john@example.com", "phone": "+1 (555) 123-4567", "github": "github.com/johnsmith", "linkedin": "linkedin.com/in/johnsmith", "website": "johnsmith.dev", "pronouns": "he/him", "orcid": "0000-0000-0000-0000"},
-  "education": [{"institution": "Stanford University", "degree": "Computer Science BS", "location": "Stanford, CA", "startDate": "2020-09", "endDate": "2024-06", "gpa": "3.8/4.0", "description": "Studied algorithms, data structures, ML"}],
-  "work": [{"company": "Google", "position": "Software Engineer Intern", "location": "Mountain View, CA", "startDate": "2023-07", "endDate": "2023-09", "description": "Developed backend services, improved performance"}],
-  "projects": [{"name": "Recommendation Engine", "role": "Lead Developer", "url": "github.com/johnsmith/recommend", "startDate": "2023-01", "endDate": "2023-05", "description": "Built ML recommendation system using Python and TensorFlow"}],
-  "research": [{"title": "Deep Learning for Recommendation Systems", "journal": "ACM Computing Surveys", "authors": "John Smith, Jane Doe", "date": "2024-03", "doi": "doi.org/10.1234/example", "description": "Proposed novel deep learning architecture"}],
-  "skills": "Python, Java, C++, TensorFlow, PostgreSQL, Git"
-}
-
-Return complete resume data in this format.`
-        };
+        const prompt = this._getSampleDataPrompt(currentLang);
 
         try {
-            const response = await this.makeRequest(prompts[currentLang], {
-                temperature: 0.3,
-                maxOutputTokens: 2048  // Ensure enough tokens for complete JSON
+            const jsonData = await this._makeRequest(prompt, {
+                jsonOutput: true,
+                temperature: 0.4,
+                maxOutputTokens: 8192
             });
-            console.log('Raw AI response:', response);
-            
-            // Extract JSON from response, handle both plain JSON and markdown code blocks
-            let jsonString = '';
-            
-            // Try to extract from markdown code block first
-            const markdownMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-            if (markdownMatch) {
-                jsonString = markdownMatch[1];
-            } else {
-                // Fall back to direct JSON extraction
-                const jsonMatch = response.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    jsonString = jsonMatch[0];
-                } else {
-                    throw new Error('No JSON found in response');
-                }
+
+            // Basic validation
+            if (!jsonData || !jsonData.personal || !jsonData.personal.name) {
+                throw new Error('返回的示例数据无效: 缺少个人信息');
             }
             
-            console.log('Extracted JSON string:', jsonString);
-            
-            // Clean up common JSON issues
-            jsonString = jsonString
-                .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
-                .replace(/[\u201C\u201D]/g, '"')  // Replace smart quotes
-                .replace(/[\u2018\u2019]/g, "'")  // Replace smart apostrophes
-                .replace(/,\s*}/g, '}')  // Remove trailing comma before closing brace
-                .replace(/,\s*]/g, ']')  // Remove trailing comma before closing bracket
-                .replace(/\n/g, ' ')  // Replace newlines with spaces
-                .replace(/\s+/g, ' ')  // Normalize whitespace
-                .trim();
-            
-            let jsonData;
-            try {
-                jsonData = JSON.parse(jsonString);
-            } catch (parseError) {
-                console.log('Initial JSON parse failed, attempting repair...');
-                console.error('JSON parse error:', parseError);
-                console.error('Problematic JSON:', jsonString);
-                
-                // Try to fix common issues and parse again
-                jsonString = this.repairJsonString(jsonString);
-                
-                try {
-                    jsonData = JSON.parse(jsonString);
-                } catch (secondParseError) {
-                    console.error('Failed to parse JSON after cleanup:', secondParseError);
-                    console.error('Final JSON string:', jsonString);
-                    throw new Error('Unable to parse JSON response');
-                }
-            }
-            
-            // Validate required structure
-            if (!jsonData.personal || !jsonData.personal.name) {
-                throw new Error('Invalid sample data: missing personal information');
-            }
-            
-            // Ensure all required arrays exist
+            // Ensure all sections are arrays, even if empty, for consistency.
             jsonData.education = jsonData.education || [];
             jsonData.work = jsonData.work || [];
             jsonData.projects = jsonData.projects || [];
@@ -226,232 +158,223 @@ Return complete resume data in this format.`
             
             return jsonData;
         } catch (error) {
-            console.error('Error generating sample data:', error);
-            throw new Error('Failed to generate sample data');
+            console.error('生成示例数据失败:', error);
+            throw new Error(`无法生成示例数据. ${error.message}`);
         }
     }
 
-    repairJsonString(jsonString) {
-        // More aggressive JSON repair
-        let repaired = jsonString;
-        
-        // Fix unquoted keys
-        repaired = repaired.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
-        
-        // Fix unquoted string values (be more careful about numbers and booleans)
-        repaired = repaired.replace(/:\s*([^",{\[\]}\s][^",{\[\]}\n]*?)\s*([,}])/g, (match, value, ending) => {
-            // Don't quote numbers, booleans, or null
-            if (/^(null|true|false|\d+(\.\d+)?)$/.test(value.trim())) {
-                return `: ${value.trim()}${ending}`;
-            }
-            return `: "${value.trim()}"${ending}`;
-        });
-        
-        // Fix incomplete objects/arrays by adding closing brackets
-        let openBraces = (repaired.match(/\{/g) || []).length;
-        let closeBraces = (repaired.match(/\}/g) || []).length;
-        let openBrackets = (repaired.match(/\[/g) || []).length;
-        let closeBrackets = (repaired.match(/\]/g) || []).length;
-        
-        // Add missing closing brackets
-        while (closeBraces < openBraces) {
-            repaired += '}';
-            closeBraces++;
-        }
-        while (closeBrackets < openBrackets) {
-            repaired += ']';
-            closeBrackets++;
-        }
-        
-        // Remove any trailing commas before closing
-        repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
-        
-        return repaired;
-    }
-
+    /**
+     * Enhances a specific piece of text given some context.
+     * @param {string} text The text to enhance.
+     * @param {string} context The context for the enhancement.
+     * @returns {Promise<string>} The enhanced text.
+     */
     async enhanceText(text, context = '') {
-        if (!text) {
-            throw new Error('Text is required for enhancement');
+        if (!text || !text.trim()) {
+            return text;
         }
-
         const currentLang = i18n ? i18n.getCurrentLanguage() : 'zh-CN';
-        
-        const prompts = {
-            'zh-CN': `请润色以下简历内容，使其更加专业、简洁和有吸引力。保持原有的事实信息不变，但改进语言表达、结构和格式。${context ? `上下文：${context}` : ''}
-
-原始内容：
-${text}
-
-请直接返回润色后的内容，不要包含任何解释或额外信息。`,
-            'en-US': `Please enhance the following resume content to make it more professional, concise, and attractive. Keep the original factual information unchanged, but improve language expression, structure, and formatting. ${context ? `Context: ${context}` : ''}
-
-Original content:
-${text}
-
-Please return only the enhanced content without any explanations or additional information.`
-        };
+        const prompt = this._getEnhanceTextPrompt(currentLang, text, context);
 
         try {
-            const response = await this.makeRequest(prompts[currentLang], {
-                temperature: 0.5,
-                maxOutputTokens: 512
+            const result = await this._makeRequest(prompt, {
+                jsonOutput: true,
+                temperature: 0.6,
+                maxOutputTokens: 2048
             });
-            
-            return response.trim();
+            return (result && result.enhanced_text) ? result.enhanced_text.trim() : text;
         } catch (error) {
-            console.error('Error enhancing text:', error);
-            throw new Error('Failed to enhance text');
+            console.error(`润色文本失败: ${error.message}. 返回原始文本.`);
+            // Fallback to original text on failure to avoid data loss.
+            return text; 
         }
     }
 
+    /**
+     * Enhances a work experience description.
+     * @param {string} position The job position.
+     * @param {string} company The company name.
+     * @param {string} description The original description.
+     * @returns {Promise<string>} The enhanced description.
+     */
     async enhanceWorkDescription(position, company, description) {
         const currentLang = i18n ? i18n.getCurrentLanguage() : 'zh-CN';
-        
-        const prompts = {
-            'zh-CN': `请为以下工作经历生成专业的工作描述。如果提供了原始描述，请基于它进行润色；如果没有提供描述，请根据职位和公司信息生成合适的描述。
-
-职位：${position}
-公司：${company}
-原始描述：${description || '无'}
-
-要求：
-1. 使用动作词开头的短句
-2. 突出成就和影响
-3. 量化结果（如适用）
-4. 保持专业和简洁
-5. 每行一个要点，用换行符分隔
-
-请直接返回工作描述内容，每个要点一行。`,
-            'en-US': `Please generate professional job descriptions for the following work experience. If an original description is provided, enhance it; if not, generate appropriate descriptions based on the position and company.
-
-Position: ${position}
-Company: ${company}
-Original Description: ${description || 'None'}
-
-Requirements:
-1. Start with action verbs
-2. Highlight achievements and impact
-3. Quantify results when applicable
-4. Keep professional and concise
-5. One bullet point per line, separated by line breaks
-
-Please return only the job description content, one point per line.`
-        };
+        const context = currentLang === 'zh-CN' ? `在 ${company} 担任 ${position} 的工作经历` : `Work experience as ${position} at ${company}`;
+        const prompt = this._getEnhanceDescriptionPrompt(currentLang, context, description);
 
         try {
-            const response = await this.makeRequest(prompts[currentLang], {
+            const result = await this._makeRequest(prompt, {
+                jsonOutput: true,
                 temperature: 0.6,
-                maxOutputTokens: 256
+                maxOutputTokens: 2048
             });
-            
-            return response.trim();
+            return (result && result.enhanced_description) ? result.enhanced_description.trim() : description;
         } catch (error) {
-            console.error('Error enhancing work description:', error);
-            throw new Error('Failed to enhance work description');
+            console.error(`润色工作描述失败: ${error.message}. 返回原始描述.`);
+            return description;
         }
     }
-
+    
+    /**
+     * Enhances a project description.
+     * @param {string} name The project name.
+     * @param {string} role The user's role in the project.
+     * @param {string} description The original description.
+     * @returns {Promise<string>} The enhanced description.
+     */
     async enhanceProjectDescription(name, role, description) {
         const currentLang = i18n ? i18n.getCurrentLanguage() : 'zh-CN';
+        const context = currentLang === 'zh-CN' ? `项目: ${name} (角色: ${role})` : `Project: ${name} (Role: ${role})`;
+        const prompt = this._getEnhanceDescriptionPrompt(currentLang, context, description);
         
-        const prompts = {
-            'zh-CN': `请为以下项目经历生成专业的项目描述。如果提供了原始描述，请基于它进行润色；如果没有提供描述，请根据项目名称和角色生成合适的描述。
-
-项目名称：${name}
-角色：${role}
-原始描述：${description || '无'}
-
-要求：
-1. 突出技术栈和实现方案
-2. 强调个人贡献和成果
-3. 展示解决的问题或带来的价值
-4. 保持技术性和专业性
-5. 每行一个要点，用换行符分隔
-
-请直接返回项目描述内容，每个要点一行。`,
-            'en-US': `Please generate professional project descriptions for the following project experience. If an original description is provided, enhance it; if not, generate appropriate descriptions based on the project name and role.
-
-Project Name: ${name}
-Role: ${role}
-Original Description: ${description || 'None'}
-
-Requirements:
-1. Highlight tech stack and implementation approach
-2. Emphasize personal contributions and achievements
-3. Show problems solved or value delivered
-4. Keep technical and professional
-5. One bullet point per line, separated by line breaks
-
-Please return only the project description content, one point per line.`
-        };
-
         try {
-            const response = await this.makeRequest(prompts[currentLang], {
+            const result = await this._makeRequest(prompt, {
+                jsonOutput: true,
                 temperature: 0.6,
-                maxOutputTokens: 256
+                maxOutputTokens: 2048
             });
-            
-            return response.trim();
+            return (result && result.enhanced_description) ? result.enhanced_description.trim() : description;
         } catch (error) {
-            console.error('Error enhancing project description:', error);
-            throw new Error('Failed to enhance project description');
+            console.error(`润色项目描述失败: ${error.message}. 返回原始描述.`);
+            return description;
         }
     }
 
+    /**
+     * Generates a list of skills based on resume content.
+     * @param {Array} education 
+     * @param {Array} work 
+     * @param {Array} projects 
+     * @param {Array} research 
+     * @returns {Promise<string>} A comma-separated string of skills.
+     */
     async generateSkills(education = [], work = [], projects = [], research = []) {
         const currentLang = i18n ? i18n.getCurrentLanguage() : 'zh-CN';
-        
-        const context = {
-            education: education.map(edu => `${edu.degree} at ${edu.institution}`).join(', '),
-            work: work.map(w => `${w.position} at ${w.company}`).join(', '),
-            projects: projects.map(p => `${p.name} (${p.role})`).join(', '),
-            research: research.map(r => `${r.title} in ${r.journal}`).join(', ')
-        };
-        
-        const prompts = {
-            'zh-CN': `根据以下背景信息，生成一个专业的技能列表：
-
-教育背景：${context.education}
-工作经历：${context.work}
-项目经历：${context.projects}
-科研经历：${context.research}
-
-请生成相关的技术技能，包括：
-1. 编程语言
-2. 框架和库
-3. 工具和平台
-4. 其他技术技能
-
-请以逗号分隔的格式返回技能列表，保持简洁专业。`,
-            'en-US': `Based on the following background information, generate a professional skills list:
-
-Education: ${context.education}
-Work Experience: ${context.work}
-Projects: ${context.projects}
-Research & Publications: ${context.research}
-
-Please generate relevant technical skills including:
-1. Programming languages
-2. Frameworks and libraries
-3. Tools and platforms
-4. Other technical skills
-
-Please return the skills list in comma-separated format, keeping it concise and professional.`
-        };
+        const prompt = this._getGenerateSkillsPrompt(currentLang, education, work, projects, research);
 
         try {
-            const response = await this.makeRequest(prompts[currentLang], {
+            const result = await this._makeRequest(prompt, {
+                jsonOutput: true,
                 temperature: 0.5,
-                maxOutputTokens: 128
+                maxOutputTokens: 512,
             });
-            
-            return response.trim();
+            return (result && result.skills) ? result.skills.trim() : '';
         } catch (error) {
-            console.error('Error generating skills:', error);
-            throw new Error('Failed to generate skills');
+            console.error(`生成技能列表失败: ${error.message}.`);
+            return '';
         }
+    }
+
+
+    // --- Prompt Generation Helpers ---
+
+    _getSampleDataPrompt(lang) {
+        const jsonStructure = `{
+  "personal": {"name": "string", "location": "string", "email": "string", "phone": "string", "github": "string", "linkedin": "string", "website": "string", "pronouns": "string", "orcid": "string"},
+  "education": [{"institution": "string", "degree": "string", "location": "string", "startDate": "YYYY-MM", "endDate": "YYYY-MM", "gpa": "string", "description": "string"}],
+  "work": [{"company": "string", "position": "string", "location": "string", "startDate": "YYYY-MM", "endDate": "YYYY-MM", "description": "string (use '\\n' for bullet points)"}],
+  "projects": [{"name": "string", "role": "string", "url": "string", "startDate": "YYYY-MM", "endDate": "YYYY-MM", "description": "string (use '\\n' for bullet points)"}],
+  "research": [{"title": "string", "journal": "string", "authors": "string", "date": "YYYY-MM", "doi": "string", "description": "string (use '\\n' for bullet points)"}],
+  "skills": "string, string, ..."
+}`;
+        if (lang === 'zh-CN') {
+            return `生成一份专业、完整、高质量的中文机器学习工程师简历示例。能力足够强大, 描述足够细致, 偏向工程师口吻, 不要过于口语化和营销化。
+你必须只返回一个符合以下描述的JSON对象，不要包含任何其他文本或markdown标记。
+JSON结构:
+${jsonStructure}
+
+要求:
+- 描述性字段（description）请使用生动、量化的语言，并用'\\n'作为换行符来分隔要点。
+- 数据内容要真实、专业且相互关联。
+- 直接输出JSON对象。`;
+        }
+        return `Generate a professional, complete, and high-quality sample resume for a machine learning engineer in English. The ability is strong enough, the description is detailed enough, and the tone is more like an engineer rather than a marketer.
+You must return only a JSON object matching the following description. Do not include any other text or markdown specifiers.
+JSON Structure:
+${jsonStructure}
+
+Requirements:
+- For description fields, use vivid, quantified language and use '\\n' as a newline character to separate bullet points.
+- The data should be realistic, professional, and interconnected.
+- Output the raw JSON object directly.`;
+    }
+
+    _getEnhanceTextPrompt(lang, text, context) {
+        if (lang === 'zh-CN') {
+            return `请为简历润色以下内容，使其更专业、有影响力。
+上下文: ${context}
+原始内容: "${text}"
+
+要求:
+1. 使用强有力的动词和量化成果。
+2. 保持简洁，突出核心贡献。
+3. 优化表达，但保留核心事实，突出数据和核心技术栈，口吻偏向工程师。
+4. 返回一个JSON对象，格式为 { "enhanced_text": "润色后的内容" }`;
+        }
+        return `Please enhance the following resume content to be more professional and impactful.
+Context: ${context}
+Original Content: "${text}"
+
+Requirements:
+1. Use strong action verbs and quantifiable results.
+2. Be concise and highlight core contributions.
+3. Improve wording but preserve key facts, highlight data and core technical stack, and the tone is more like an engineer rather than a marketer.
+4. Return a JSON object in the format: { "enhanced_text": "The enhanced content" }`;
+    }
+
+    _getEnhanceDescriptionPrompt(lang, context, description) {
+        if (lang === 'zh-CN') {
+            return `请为简历润色以下描述，使其更专业、有影响力，每个要点以'\\n'分隔。
+上下文: ${context}
+原始描述: "${description}"
+
+要求:
+1. 使用强有力的动词和量化成果。
+2. 保持简洁，突出核心贡献，口吻偏向工程师。
+3. 返回一个JSON对象，格式为 { "enhanced_description": "润色后的描述，要点以'\\n'分隔" }`;
+        }
+        return `Please enhance the following resume description to be more professional and impactful, with bullet points separated by '\\n'.
+Context: ${context}
+Original Description: "${description}"
+
+Requirements:
+1. Use strong action verbs and quantifiable results.
+2. Be concise and highlight core contributions, and the tone is more like an engineer rather than a marketer.
+3. Return a JSON object in the format: { "enhanced_description": "The enhanced description, with points separated by '\\n'" }`;
+    }
+
+    _getGenerateSkillsPrompt(lang, education, work, projects, research) {
+        const contextData = {
+            education: education.map(e => `${e.degree} at ${e.institution}: ${e.description}`).join('; '),
+            work: work.map(w => `${w.position} at ${w.company}: ${w.description}`).join('; '),
+            projects: projects.map(p => `${p.name}: ${p.description}`).join('; '),
+            research: research.map(r => `${r.title}: ${r.description}`).join('; '),
+        };
+
+        if (lang === 'zh-CN') {
+            return `根据以下简历摘要，生成一个相关的技能列表。
+教育: ${contextData.education}
+工作: ${contextData.work}
+项目: ${contextData.projects}
+研究: ${contextData.research}
+
+要求:
+- 提取并总结出关键的技术技能。
+- 包括编程语言、框架、工具和专业领域。
+- 返回一个JSON对象，格式为 { "skills": "技能1, 技能2, ..." }`;
+        }
+        return `Based on the following resume summary, generate a relevant list of skills.
+Education: ${contextData.education}
+Work: ${contextData.work}
+Projects: ${contextData.projects}
+Research: ${contextData.research}
+
+Requirements:
+- Extract and summarize key technical skills.
+- Include programming languages, frameworks, tools, and areas of expertise.
+- Return a JSON object in the format: { "skills": "Skill 1, Skill 2, ..." }`;
     }
 }
 
-// Create global instance
+// Create a global instance for the application to use.
 window.geminiAPI = new GeminiAPI(); 
