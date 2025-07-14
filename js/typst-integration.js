@@ -403,13 +403,20 @@ class TypstIntegration {
             typstCode += this.generateProjectsSection(projects);
         }
 
-        if (research.length > 0) {
-            typstCode += this.generateResearchSection(research);
+        // Research
+        if (data.research && data.research.length > 0 && data.research.some(p => p.title || p.journal)) {
+            typstCode += this.generateResearchSection(data.research);
         }
 
-        if (skills && skills.trim()) {
-            typstCode += this.generateSkillsSection(skills);
+        // Skills
+        if (data.skills && Array.isArray(data.skills) && data.skills.length > 0) {
+            typstCode += this.generateSkillsSection(data.skills);
         }
+
+        // Closing
+        typstCode += `
+#v(20pt)
+`;
 
         console.log('Typst 代码生成完成');
         return typstCode;
@@ -504,15 +511,43 @@ class TypstIntegration {
     }
 
     generateSkillsSection(skills) {
+        if (!skills || skills.length === 0) {
+            return '';
+        }
+    
         const currentLang = i18n ? i18n.getCurrentLanguage() : 'zh-CN';
         const title = currentLang === 'en-US' ? 'Skills' : '技能特长';
-        return `
+        let section = `
 // Skills
 #text(16pt, weight: "bold")[#skills-icon ${title}]
 #line(length: 100%)
-
-#text(size: 10pt)[#par[${this.escapeTypst(skills)}]]
 `;
+        
+        const sections = skills.map(category => {
+            const hasItems = category.items && Array.isArray(category.items) && category.items.some(i => i && i.trim());
+            if (!hasItems) return '';
+    
+            const filteredItems = category.items
+                .map(item => this.escapeTypst(item.trim()))
+                .filter(Boolean);
+            
+            if (filteredItems.length === 0) return '';
+    
+            if (category.category && category.category.trim()) {
+                const categoryText = this.escapeTypst(category.category.trim());
+                const itemsText = filteredItems.join(', ');
+                return `#text(size: 9pt)[#tag-icon *${categoryText}:* ${itemsText}]`;
+            } else {
+                const itemsList = filteredItems.join(', ');
+                return `#text(size: 9pt)[${itemsList}]`;
+            }
+        }).filter(Boolean);
+    
+        if (sections.length > 0) {
+            section += sections.join('\\n#v(2pt)\\n');
+        }
+    
+        return section;
     }
 
     escapeTypst(str) {

@@ -23,6 +23,10 @@ class GeminiAPI {
         return !!this.apiKey;
     }
 
+    _getJobDescription() {
+        return localStorage.getItem('job-description') || '';
+    }
+
     // --- Core API Request Logic ---
 
     /**
@@ -154,7 +158,7 @@ class GeminiAPI {
             jsonData.work = jsonData.work || [];
             jsonData.projects = jsonData.projects || [];
             jsonData.research = jsonData.research || [];
-            jsonData.skills = jsonData.skills || '';
+            jsonData.skills = jsonData.skills || [];
             
             return jsonData;
         } catch (error) {
@@ -246,7 +250,7 @@ class GeminiAPI {
      * @param {Array} work 
      * @param {Array} projects 
      * @param {Array} research 
-     * @returns {Promise<string>} A comma-separated string of skills.
+     * @returns {Promise<Array>} An array of skill category objects.
      */
     async generateSkills(education = [], work = [], projects = [], research = []) {
         const currentLang = i18n ? i18n.getCurrentLanguage() : 'zh-CN';
@@ -256,12 +260,12 @@ class GeminiAPI {
             const result = await this._makeRequest(prompt, {
                 jsonOutput: true,
                 temperature: 0.5,
-                maxOutputTokens: 512,
+                maxOutputTokens: 1024,
             });
-            return (result && result.skills) ? result.skills.trim() : '';
+            return (result && result.skills && Array.isArray(result.skills)) ? result.skills : [];
         } catch (error) {
             console.error(`生成技能列表失败: ${error.message}.`);
-            return '';
+            return [];
         }
     }
 
@@ -269,16 +273,19 @@ class GeminiAPI {
     // --- Prompt Generation Helpers ---
 
     _getSampleDataPrompt(lang) {
+        const jobDescription = this._getJobDescription();
+        const jobContext = jobDescription ? `请参考以下职位描述信息，以便生成更相关的内容：\n\n---\n${jobDescription}\n---\n\n` : '';
+        
         const jsonStructure = `{
   "personal": {"name": "string", "location": "string", "email": "string", "phone": "string", "github": "string", "linkedin": "string", "website": "string", "pronouns": "string", "orcid": "string"},
   "education": [{"institution": "string", "degree": "string", "location": "string", "startDate": "YYYY-MM", "endDate": "YYYY-MM", "gpa": "string", "description": "string"}],
   "work": [{"company": "string", "position": "string", "location": "string", "startDate": "YYYY-MM", "endDate": "YYYY-MM", "description": "string (use '\\n' for bullet points)"}],
   "projects": [{"name": "string", "role": "string", "url": "string", "startDate": "YYYY-MM", "endDate": "YYYY-MM", "description": "string (use '\\n' for bullet points)"}],
   "research": [{"title": "string", "journal": "string", "authors": "string", "date": "YYYY-MM", "doi": "string", "description": "string (use '\\n' for bullet points)"}],
-  "skills": "string, string, ..."
+  "skills": [{"category": "string", "items": ["string", "string", "..."]}]
 }`;
         if (lang === 'zh-CN') {
-            return `生成一份专业、完整、高质量的中文机器学习工程师简历示例。能力足够强大, 描述足够细致, 偏向工程师口吻, 不要过于口语化和营销化。
+            return `${jobContext}生成一份专业、完整、高质量的符合工作描述(如果没有工作描述, 则生成一份符合机器学习工程师的简历示例)的***中文简历***示例。能力足够强大, 描述足够细致, 偏向工程师口吻, 不要过于口语化和营销化。
 你必须只返回一个符合以下描述的JSON对象，不要包含任何其他文本或markdown标记。
 JSON结构:
 ${jsonStructure}
@@ -286,9 +293,23 @@ ${jsonStructure}
 要求:
 - 描述性字段（description）请使用生动、量化的语言，并用'\\n'作为换行符来分隔要点。
 - 数据内容要真实、专业且相互关联。
+- 技能部分应按类别（如编程语言、框架与库、工具与平台）进行组织。
+- 直接输出JSON对象。`;
+        } else if (lang === 'ja-JP') {
+            return `${jobContext}あなたはキャリアコンサルタントです。提供された職務経歴書（もしあれば）に合致する、日本のプロフェッショナルな***日本语履歴書***のサンプルデータを生成してください。職務経歴書がない場合は、典型的なソフトウェアエンジニアの履歴書を作成してください。データは以下のJSON形式に従う必要があります。すべてのフィールドに現実的で詳細な内容を記入してください。特に、職務経歴とプロジェクト経験のdescriptionは、具体的な成果を箇条書きで3〜5点挙げてください。スキルは、カテゴリ分けして具体的に記述してください。
+
+            JSON出力のみを提供し、他のテキストは含めないでください。
+JSON構造:
+${jsonStructure}
+
+要求:
+- 描述性字段（description）请使用生动、量化的语言，并用'\\n'作为换行符来分隔要点。
+- データ内容要真实、专业且相互关联。
+- スキル部分应按类别（如编程语言、框架与库、工具与平台）进行组织。
 - 直接输出JSON对象。`;
         }
-        return `Generate a professional, complete, and high-quality sample resume for a machine learning engineer in English. The ability is strong enough, the description is detailed enough, and the tone is more like an engineer rather than a marketer.
+        // Default to English
+        return `${jobContext}Generate a professional, complete, and high-quality sample resume in English that is highly relevant to the provided job description. If no job description is provided, generate a sample for a typical software engineer.
 You must return only a JSON object matching the following description. Do not include any other text or markdown specifiers.
 JSON Structure:
 ${jsonStructure}
@@ -296,83 +317,145 @@ ${jsonStructure}
 Requirements:
 - For description fields, use vivid, quantified language and use '\\n' as a newline character to separate bullet points.
 - The data should be realistic, professional, and interconnected.
+- Skills should be organized into categories (e.g., Programming Languages, Frameworks & Libraries, Tools & Platforms).
 - Output the raw JSON object directly.`;
     }
 
     _getEnhanceTextPrompt(lang, text, context) {
+        const jobDescription = this._getJobDescription();
+        const jobContext = jobDescription ? `请参考以下职位描述信息：\n---\n${jobDescription}\n---\n\n` : '';
+
         if (lang === 'zh-CN') {
-            return `请为简历润色以下内容，使其更专业、有影响力。
+            return `${jobContext}请为简历润色以下内容，使其更专业、有影响力，并与以下职位描述高度相关。如果未提供职位描述，请以专业工程师的口吻进行优化。
 上下文: ${context}
 原始内容: "${text}"
 
 要求:
 1. 使用强有力的动词和量化成果。
 2. 保持简洁，突出核心贡献。
-3. 优化表达，但保留核心事实，突出数据和核心技术栈，口吻偏向工程师。
+3. 优化表达，但保留核心事实，突出与职位描述相关的技能和经验。
 4. 返回一个JSON对象，格式为 { "enhanced_text": "润色后的内容" }`;
+        } else if (lang === 'ja-JP') {
+             return `${jobContext}あなたはプロのキャリアコンサルタントです。以下の日本の履歴書用のテキストを、提供された職務経歴書（もしあれば）に沿って、より専門的でインパクトのあるものに校正・改善してください。職務経歴書がない場合は、プロのエンジニアの視点で改善してください。
+コンテキスト: ${context}
+元のテキスト: "${text}"
+
+要求:
+1. 専門用語と具体的な成果を用いて、内容を強化してください。
+2. 簡潔かつ明確な表現を心がけてください。
+3. 日本のビジネス文化に適した、丁寧でプロフェッショナルなトーンにし、職務経歴書で求められている資質を強調してください。
+4. 返却形式は { "enhanced_text": "改善後のテキスト" } というJSONオブジェクトにしてください。`;
         }
-        return `Please enhance the following resume content to be more professional and impactful.
+        // Default to English
+        return `${jobContext}Please enhance the following resume content to be more professional, impactful, and highly aligned with the provided job description. If no job description is provided, please optimize it with a professional engineer's tone.
 Context: ${context}
 Original Content: "${text}"
 
 Requirements:
 1. Use strong action verbs and quantifiable results.
 2. Be concise and highlight core contributions.
-3. Improve wording but preserve key facts, highlight data and core technical stack, and the tone is more like an engineer rather than a marketer.
+3. Improve wording but preserve key facts, highlighting skills and experiences relevant to the job description.
 4. Return a JSON object in the format: { "enhanced_text": "The enhanced content" }`;
     }
 
     _getEnhanceDescriptionPrompt(lang, context, description) {
+        const jobDescription = this._getJobDescription();
+        const jobContext = jobDescription ? `请参考以下职位描述信息：\n---\n${jobDescription}\n---\n\n` : '';
+
         if (lang === 'zh-CN') {
-            return `请为简历润色以下描述，使其更专业、有影响力，每个要点以'\\n'分隔。
+            return `${jobContext}请为简历润色以下描述，使其更专业、有影响力，并与职位描述高度相关。如果未提供职位描述，请以专业工程师的视角进行优化。每个要点以'\\n'分隔。
 上下文: ${context}
 原始描述: "${description}"
 
 要求:
 1. 使用强有力的动词和量化成果。
-2. 保持简洁，突出核心贡献，口吻偏向工程师。
+2. 保持简洁，突出与职位描述相关的核心贡献和技术。
 3. 返回一个JSON对象，格式为 { "enhanced_description": "润色后的描述，要点以'\\n'分隔" }`;
+        } else if (lang === 'ja-JP') {
+            return `${jobContext}あなたはプロのキャリアコンサルタントです。日本の履歴書に記載する職務経歴またはプロジェクト経験の「説明」を、提供された職務経歴書（もしあれば）に沿って改善してください。具体的で測定可能な成果を強調した、箇条書きの力強い文章を3～5点作成してください。各箇条書きは'\\n'で区切ってください。職務経歴書がない場合は、プロのエンジニアの視点で改善してください。
+コンテキスト: ${context}
+元の説明: "${description}"
+
+要求:
+1. 「～担当」「～実施」のような受動的な表現ではなく、「～を実現」「～に貢献」のような能動的な動詞で始めてください。
+2. 数値を用いて成果を具体的に示してください（例：「40%削減」「売上15%向上」）。
+3. 専門用語を適切に使用し、職務経歴書で求められている技術的な深さを示してください。
+4. 返却形式は { "enhanced_description": "改善後の説明（'\\n'区切り）" } というJSONオブジェクトにしてください。`;
         }
-        return `Please enhance the following resume description to be more professional and impactful, with bullet points separated by '\\n'.
+        // Default to English
+        return `${jobContext}Please enhance the following resume description to be more professional, impactful, and highly aligned with the provided job description. If no job description is provided, please optimize it from a professional engineer's perspective, with bullet points separated by '\\n'.
 Context: ${context}
 Original Description: "${description}"
 
 Requirements:
 1. Use strong action verbs and quantifiable results.
-2. Be concise and highlight core contributions, and the tone is more like an engineer rather than a marketer.
+2. Be concise and highlight core contributions and technologies relevant to the job description.
 3. Return a JSON object in the format: { "enhanced_description": "The enhanced description, with points separated by '\\n'" }`;
     }
 
     _getGenerateSkillsPrompt(lang, education, work, projects, research) {
+        const jobDescription = this._getJobDescription();
+        const jobContext = jobDescription ? `请参考以下职位描述信息：\n---\n${jobDescription}\n---\n\n` : '';
+
         const contextData = {
-            education: education.map(e => `${e.degree} at ${e.institution}: ${e.description}`).join('; '),
-            work: work.map(w => `${w.position} at ${w.company}: ${w.description}`).join('; '),
-            projects: projects.map(p => `${p.name}: ${p.description}`).join('; '),
-            research: research.map(r => `${r.title}: ${r.description}`).join('; '),
+            education: education.map(e => `${e.degree || ''} at ${e.institution || ''}: ${e.description || ''}`).join('; '),
+            work: work.map(w => `${w.position || ''} at ${w.company || ''}: ${w.description || ''}`).join('; '),
+            projects: projects.map(p => `${p.name || ''}: ${p.description || ''}`).join('; '),
+            research: research.map(r => `${r.title || ''}: ${r.description || ''}`).join('; '),
         };
+        const jsonStructure = `[
+    {
+        "category": "string (e.g., 'Programming Languages')",
+        "items": ["string", "string", ...]
+    },
+    {
+        "category": "string (e.g., 'Frameworks & Libraries')",
+        "items": ["string", "string", ...]
+    }
+]`;
 
         if (lang === 'zh-CN') {
-            return `根据以下简历摘要，生成一个相关的技能列表。
-教育: ${contextData.education}
-工作: ${contextData.work}
-项目: ${contextData.projects}
-研究: ${contextData.research}
+            return `${jobContext}根据以下简历摘要和职位描述（如果提供），生成一个高度相关的技能列表。优先考虑职位描述中提到的技能。如果未提供职位描述，则根据摘要生成通用但全面的技术技能列表。
+上下文:
+- 教育: ${contextData.education}
+- 工作: ${contextData.work}
+- 项目: ${contextData.projects}
+- 研究: ${contextData.research}
 
 要求:
 - 提取并总结出关键的技术技能。
-- 包括编程语言、框架、工具和专业领域。
-- 返回一个JSON对象，格式为 { "skills": "技能1, 技能2, ..." }`;
+- 将技能逻辑地分组到不同的类别中，例如“编程语言”、“框架与库”、“工具与平台”等。
+- 返回一个JSON对象，其唯一的键是 "skills"，值是一个符合以下描述的数组。不要返回任何其他文本或markdown标记。
+- JSON结构: { "skills": ${jsonStructure} }
+- 直接输出JSON对象。`;
+        } else if (lang === 'ja-JP') {
+            return `${jobContext}あなたはIT業界に精通したキャリアコンサルタントです。以下の履歴書要約と、提供された職務経歴書（もしあれば）に基づき、記載すべき重要なスキルを分析・抽出してください。職務経歴書で要求されているスキルを最優先してください。職務経歴書がない場合は、要約内容から一般的なソフトウェアエンジニア向けのスキルを抽出してください。
+
+入力情報:
+- 学歴: ${contextData.education}
+- 職務経歴: ${contextData.work}
+- プロジェクト経験: ${contextData.projects}
+- 研究経験: ${contextData.research}
+
+要求:
+- 上記の情報から、関連性の高い技術スキルを抽出・要約してください。
+- スキルを「プログラミング言語」「クラウド・DevOps」「データベース」のような適切な日本語のカテゴリに分類してください。
+- 返却形式は { "skills": ${jsonStructure} } というJSONオブジェクトにしてください。他のテキストや説明は含めないでください。`;
         }
-        return `Based on the following resume summary, generate a relevant list of skills.
-Education: ${contextData.education}
-Work: ${contextData.work}
-Projects: ${contextData.projects}
-Research: ${contextData.research}
+        // Default to English
+        return `${jobContext}Based on the following resume summary and the provided job description (if any), generate a highly relevant list of skills. Prioritize skills mentioned in the job description. If no job description is available, generate a general but comprehensive list of technical skills based on the summary.
+Context:
+- Education: ${contextData.education}
+- Work: ${contextData.work}
+- Projects: ${contextData.projects}
+- Research: ${contextData.research}
 
 Requirements:
 - Extract and summarize key technical skills.
-- Include programming languages, frameworks, tools, and areas of expertise.
-- Return a JSON object in the format: { "skills": "Skill 1, Skill 2, ..." }`;
+- Group the skills logically into categories, such as "Programming Languages", "Frameworks & Libraries", "Tools & Platforms", etc.
+- Return a JSON object with a single key "skills", where the value is an array matching the description below. Do not return any other text or markdown specifiers.
+- JSON Structure: { "skills": ${jsonStructure} }
+- Output the raw JSON object directly.`;
     }
 }
 

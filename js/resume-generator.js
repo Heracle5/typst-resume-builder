@@ -66,6 +66,15 @@ class ResumeGenerator {
                 geminiAPI.setApiKey(e.target.value);
             });
         }
+
+        // Job Description input
+        const jobDescInput = document.getElementById('job-description');
+        if (jobDescInput) {
+            jobDescInput.value = localStorage.getItem('job-description') || '';
+            jobDescInput.addEventListener('input', (e) => {
+                localStorage.setItem('job-description', e.target.value);
+            });
+        }
     }
 
     async generateResume() {
@@ -73,6 +82,7 @@ class ResumeGenerator {
 
         this.isGenerating = true;
         this.showLoading(true);
+        this.currentPdfBytes = null; // Reset on each generation attempt
         
         try {
             // Collect form data
@@ -92,32 +102,39 @@ class ResumeGenerator {
             const typstCode = window.typstIntegration.generateTypstCode(resumeData);
             console.log('生成的Typst代码:', typstCode);
 
+            let previewSuccess = false;
             // First try to show SVG preview for immediate feedback
             try {
                 const svgContent = await window.typstIntegration.compileToSVG(typstCode);
                 this.displaySVGPreview(svgContent);
+                previewSuccess = true;
             } catch (svgError) {
-                console.warn('SVG 生成失败，显示HTML预览:', svgError);
+                console.warn('SVG 生成失败，将显示HTML预览:', svgError);
                 const htmlPreview = this.generateHTMLFallback(resumeData);
                 this.displayHTMLPreview(htmlPreview);
-                this.showToast('info', '正在显示HTML预览版本');
+                this.showToast('info', '当前为HTML预览模式');
+                previewSuccess = true;
             }
             
             // Then try to generate PDF in the background
             try {
                 const pdfBytes = await window.typstIntegration.compileToPDF(typstCode);
                 
-                if (pdfBytes) {
+                if (pdfBytes && pdfBytes.length > 0) {
                     this.currentPdfBytes = pdfBytes;
                     await this.displayPDF(pdfBytes);
-                    this.enableDownload();
                     this.showToast('success', i18n.t('status.success.generated'));
                 } else {
-                    throw new Error('PDF generation returned null');
+                    throw new Error('PDF generation returned empty result');
                 }
             } catch (pdfError) {
-                console.warn('PDF generation failed, using preview:', pdfError);
-                this.showToast('info', '已生成预览，PDF 功能暂时不可用');
+                console.warn('PDF generation failed, using preview only:', pdfError);
+                this.showToast('info', 'PDF生成失败，可下载HTML预览版');
+            }
+
+            // Enable download button if any preview was successful
+            if (previewSuccess) {
+                this.enableDownload();
             }
         } catch (error) {
             console.error('Error generating resume:', error);
@@ -272,12 +289,12 @@ class ResumeGenerator {
     }
 
     generateHTMLFallback(resumeData) {
-        const { personal, education = [], work = [], projects = [], research = [], skills = '' } = resumeData;
+        const { personal, education = [], work = [], projects = [], research = [], skills = [] } = resumeData;
         const currentLang = i18n ? i18n.getCurrentLanguage() : 'zh-CN';
         const isEnglish = currentLang === 'en-US';
         
         let html = `
-        <div style="font-family: 'Times New Roman', serif; max-width: 800px; margin: 0 auto; padding: 16px; background: white; color: black; line-height: 1.5; box-shadow: 0 0 10px rgba(0,0,0,0.1);">
+        <div style="font-family: 'Times New Roman', serif; width: 100%; padding: 16px; background: white; color: black; line-height: 1.5; word-break: break-word;">
             <div style="text-align: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #26428b;">
                 <h1 style="margin: 0 0 10px 0; color: #26428b; font-size: 28px; font-weight: bold; display: flex; align-items: center; justify-content: center; gap: 8px;">
                     <i class="fas fa-user" style="color: #26428b;"></i>
@@ -303,13 +320,13 @@ class ResumeGenerator {
             education.forEach(edu => {
                 html += `
                 <div style="margin-bottom: 10px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                         <strong><i class="fas fa-university" style="color: #1565c0;"></i> ${edu.institution || ''}</strong>
-                        <span><i class="fas fa-calendar-alt" style="color: #d32f2f;"></i> ${edu.startDate || ''} - ${edu.endDate || ''}</span>
+                        <span style="white-space: nowrap; padding-right: 5px;"><i class="fas fa-calendar-alt" style="color: #d32f2f;"></i> ${edu.startDate || ''} - ${edu.endDate || ''}</span>
                     </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <em><i class="fas fa-graduation-cap" style="color: #6a1b9a;"></i> ${edu.degree || ''}</em>
-                        <em><i class="fas fa-map-marker-alt" style="color: #ea4335;"></i> ${edu.location || ''}</em>
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                        <span><i class="fas fa-graduation-cap" style="color: #6a1b9a;"></i> ${edu.degree || ''}</span>
+                        <em style="padding-right: 5px;"><i class="fas fa-map-marker-alt" style="color: #ea4335;"></i> ${edu.location || ''}</em>
                     </div>
                     ${edu.gpa ? `<div style="color: #ff9800;"><i class="fas fa-star" style="color: #ff9800;"></i> GPA: ${edu.gpa}</div>` : ''}
                     ${edu.description ? `<p style="font-size: 14px; font-weight: 300; color: #333; margin-top: 6px; line-height: 1.4;">${edu.description}</p>` : ''}
@@ -324,13 +341,13 @@ class ResumeGenerator {
             work.forEach(workItem => {
                 html += `
                 <div style="margin-bottom: 10px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                         <strong><i class="fas fa-briefcase" style="color: #795548;"></i> ${workItem.position || ''}</strong>
-                        <span><i class="fas fa-calendar-alt" style="color: #d32f2f;"></i> ${workItem.startDate || ''} - ${workItem.endDate || ''}</span>
+                        <span style="white-space: nowrap; padding-right: 5px;"><i class="fas fa-calendar-alt" style="color: #d32f2f;"></i> ${workItem.startDate || ''} - ${workItem.endDate || ''}</span>
                     </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                         <span><i class="fas fa-building" style="color: #424242;"></i> ${workItem.company || ''}</span>
-                        <em><i class="fas fa-map-marker-alt" style="color: #ea4335;"></i> ${workItem.location || ''}</em>
+                        <em style="padding-right: 5px;"><i class="fas fa-map-marker-alt" style="color: #ea4335;"></i> ${workItem.location || ''}</em>
                     </div>
                     ${workItem.description ? `<div style="font-size: 14px; font-weight: 300; color: #333; margin-top: 6px;">${workItem.description.split('\n').map(line => line.trim() ? `<p style="margin: 2px 0; line-height: 1.4;">• ${line.trim()}</p>` : '').join('')}</div>` : ''}
                 </div>
@@ -344,9 +361,9 @@ class ResumeGenerator {
             projects.forEach(proj => {
                 html += `
                 <div style="margin-bottom: 10px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                         <strong><i class="fas fa-project-diagram" style="color: #2e7d32;"></i> ${proj.name || ''} ${proj.role ? `- <i class="fas fa-user-tag" style="color: #8e24aa;"></i> ${proj.role}` : ''}</strong>
-                        <span><i class="fas fa-calendar-alt" style="color: #d32f2f;"></i> ${proj.startDate || ''} - ${proj.endDate || ''}</span>
+                        <span style="white-space: nowrap; padding-right: 5px;"><i class="fas fa-calendar-alt" style="color: #d32f2f;"></i> ${proj.startDate || ''} - ${proj.endDate || ''}</span>
                     </div>
                     ${proj.url ? `<div><i class="fas fa-link" style="color: #1976d2;"></i> <a href="https://${proj.url}" target="_blank" style="color: #26428b; text-decoration: none;">${proj.url}</a></div>` : ''}
                     ${proj.description ? `<div style="font-size: 14px; font-weight: 300; color: #333; margin-top: 6px;">${proj.description.split('\n').map(line => line.trim() ? `<p style="margin: 2px 0; line-height: 1.4;">• ${line.trim()}</p>` : '').join('')}</div>` : ''}
@@ -361,9 +378,9 @@ class ResumeGenerator {
             research.forEach(paper => {
                 html += `
                 <div style="margin-bottom: 10px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                         <strong><i class="fas fa-file-alt" style="color: #3f51b5;"></i> ${paper.title || ''}</strong>
-                        <span><i class="fas fa-calendar-alt" style="color: #d32f2f;"></i> ${paper.date || ''}</span>
+                        <span style="white-space: nowrap; padding-right: 5px;"><i class="fas fa-calendar-alt" style="color: #d32f2f;"></i> ${paper.date || ''}</span>
                     </div>
                     ${paper.journal ? `<div><i class="fas fa-book-open" style="color: #ff9800;"></i> ${paper.journal}</div>` : ''}
                     ${paper.authors ? `<div><i class="fas fa-users" style="color: #607d8b;"></i> ${paper.authors}</div>` : ''}
@@ -374,11 +391,30 @@ class ResumeGenerator {
             });
         }
 
-        if (skills) {
+        if (skills && Array.isArray(skills) && skills.length > 0) {
             const title = isEnglish ? 'Skills' : '技能特长';
-            html += `<h2 style="border-bottom: 2px solid #26428b; color: #26428b; display: flex; align-items: center; gap: 8px;"><i class="fas fa-cogs" style="color: #ff5722;"></i> ${title}</h2>`;
-            const skillList = skills.split(/[,\n]/).map(skill => skill.trim()).filter(skill => skill);
-            html += '<div>' + skillList.map(skill => `<span style="display: inline-block; margin-right: 10px;"><i class="fas fa-check-circle" style="color: #4caf50;"></i> ${skill}</span>`).join('') + '</div>';
+            let skillsHtml = '';
+        
+            skills.forEach(category => {
+                const hasCategory = category.category && category.category.trim();
+                const validItems = category.items ? category.items.map(i => i.trim()).filter(Boolean) : [];
+        
+                if (validItems.length > 0) {
+                     if (hasCategory) {
+                        skillsHtml += `<p style="font-size: 12px; color: #333; margin: 2px 0; line-height: 1.5; display: flex; align-items: baseline;">
+                            <i class="fas fa-tag" style="color: #607d8b; margin-right: 8px; font-size: 11px; flex-shrink: 0; position: relative; top: 1px;"></i>
+                            <span><strong>${category.category}:</strong> ${validItems.join(', ')}</span>
+                        </p>`;
+                    } else {
+                        skillsHtml += `<p style="font-size: 12px; color: #333; margin: 2px 0; line-height: 1.5;">${validItems.join(', ')}</p>`;
+                    }
+                }
+            });
+        
+            if (skillsHtml) {
+                html += `<h2 style="border-bottom: 2px solid #26428b; color: #26428b; display: flex; align-items: center; gap: 8px;"><i class="fas fa-cogs" style="color: #ff5722;"></i> ${title}</h2>`;
+                html += skillsHtml;
+            }
         }
         
         html += '</div>';
@@ -429,20 +465,32 @@ class ResumeGenerator {
     }
 
     downloadPDF() {
-        if (!this.currentPdfBytes) {
+        if (this.currentPdfBytes) {
+            try {
+                const formData = formManager.collectFormData();
+                const filename = this.generateFilename(formData.personal.name);
+                window.typstIntegration.downloadPDF(this.currentPdfBytes, filename);
+                this.showToast('success', i18n.t('status.success.downloaded'));
+            } catch (error) {
+                console.error('Error downloading PDF:', error);
+                this.showToast('error', i18n.t('status.error.download'));
+            }
+            return;
+        }
+
+        // If no PDF bytes, fallback to printing the HTML/SVG preview
+        const previewContent = document.getElementById('preview-content');
+        if (!previewContent || !previewContent.children.length) {
             this.showToast('error', i18n.t('status.error.no.pdf'));
             return;
         }
 
-        try {
-            const formData = formManager.collectFormData();
-            const filename = this.generateFilename(formData.personal.name);
-            window.typstIntegration.downloadPDF(this.currentPdfBytes, filename);
-            this.showToast('success', i18n.t('status.success.downloaded'));
-        } catch (error) {
-            console.error('Error downloading PDF:', error);
-            this.showToast('error', i18n.t('status.error.download'));
-        }
+        this.showToast('info', '正在准备打印预览...请使用系统打印对话框保存为 PDF。');
+        
+        // Use a timeout to ensure toast is shown
+        setTimeout(() => {
+            window.print();
+        }, 300);
     }
 
     generateFilename(name) {
@@ -477,94 +525,68 @@ class ResumeGenerator {
             this.showToast('error', i18n.t('status.error.api'));
             return;
         }
-
+    
         this.showLoading(true, i18n.t('status.enhancing.all'));
-
+    
         try {
             const formData = formManager.collectFormData();
-            
+            const enhancementPromises = [];
+    
             // Enhance work descriptions
-            for (let i = 0; i < formData.work.length; i++) {
-                const work = formData.work[i];
-                if (work.company && work.position) {
-                    try {
-                        const enhanced = await geminiAPI.enhanceWorkDescription(
-                            work.position, 
-                            work.company, 
-                            work.description
-                        );
-                        
-                        // Update the form
-                        const workItem = document.querySelector(`[name="work_${i}_description"]`);
-                        if (workItem) {
-                            workItem.value = enhanced;
-                        }
-                    } catch (error) {
-                        console.warn(`Failed to enhance work item ${i}:`, error);
-                    }
+            formData.work.forEach((work, index) => {
+                if (work.description && work.position) {
+                    enhancementPromises.push(
+                        geminiAPI.enhanceWorkDescription(work.position, work.company, work.description)
+                            .then(enhanced => { formData.work[index].description = enhanced; })
+                            .catch(e => console.warn(`Failed to enhance work item ${index}:`, e))
+                    );
                 }
-            }
-
+            });
+    
             // Enhance project descriptions
-            for (let i = 0; i < formData.projects.length; i++) {
-                const project = formData.projects[i];
-                if (project.name) {
-                    try {
-                        const enhanced = await geminiAPI.enhanceProjectDescription(
-                            project.name,
-                            project.role,
-                            project.description
-                        );
-                        
-                        // Update the form
-                        const projectItem = document.querySelector(`[name="projects_${i}_description"]`);
-                        if (projectItem) {
-                            projectItem.value = enhanced;
-                        }
-                    } catch (error) {
-                        console.warn(`Failed to enhance project item ${i}:`, error);
-                    }
+            formData.projects.forEach((project, index) => {
+                if (project.description && project.name) {
+                    enhancementPromises.push(
+                        geminiAPI.enhanceProjectDescription(project.name, project.role, project.description)
+                            .then(enhanced => { formData.projects[index].description = enhanced; })
+                            .catch(e => console.warn(`Failed to enhance project item ${index}:`, e))
+                    );
                 }
-            }
-
+            });
+    
             // Enhance research descriptions
-            for (let i = 0; i < formData.research.length; i++) {
-                const research = formData.research[i];
-                if (research.title) {
-                    try {
-                        const enhanced = await geminiAPI.enhanceText(
-                            research.description,
-                            `Research paper: ${research.title} in ${research.journal}`
-                        );
-                        
-                        // Update the form
-                        const researchItem = document.querySelector(`[name="research_${i}_description"]`);
-                        if (researchItem) {
-                            researchItem.value = enhanced;
-                        }
-                    } catch (error) {
-                        console.warn(`Failed to enhance research item ${i}:`, error);
-                    }
+            formData.research.forEach((research, index) => {
+                if (research.description && research.title) {
+                    enhancementPromises.push(
+                        geminiAPI.enhanceText(research.description, `Research paper: ${research.title} in ${research.journal}`)
+                            .then(enhanced => { formData.research[index].description = enhanced; })
+                            .catch(e => console.warn(`Failed to enhance research item ${index}:`, e))
+                    );
                 }
-            }
-
+            });
+    
+            // Wait for all text enhancements to complete
+            await Promise.all(enhancementPromises);
+            
             // Generate skills if empty
-            const skillsInput = document.getElementById('skills');
-            if (skillsInput && (!formData.skills || formData.skills.trim() === '')) {
+            const hasSkills = formData.skills && formData.skills.length > 0 && formData.skills.some(cat => cat.items.some(i => i.trim()));
+            if (!hasSkills) {
                 try {
+                    this.showLoading(true, i18n.t('status.enhancing.skills'));
                     const skills = await geminiAPI.generateSkills(
                         formData.education,
                         formData.work,
                         formData.projects,
                         formData.research
                     );
-                    skillsInput.value = skills;
+                    formData.skills = skills;
                 } catch (error) {
                     console.warn('Failed to generate skills:', error);
                 }
             }
-
-            formManager.saveToStorage();
+    
+            // Repopulate the entire form with the enhanced data
+            formManager.populateForm(formData);
             this.showToast('success', i18n.t('status.success.enhanced.all'));
         } catch (error) {
             console.error('Error enhancing content:', error);

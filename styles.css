@@ -184,6 +184,56 @@ body {
   grid-column: 1 / -1;
 }
 
+/* Skill category specific styles */
+.skill-category .item-header {
+  gap: 8px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+
+.skill-category .skill-category-input {
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  font-size: 1.1em;
+  padding: 4px;
+  flex-grow: 1;
+}
+.skill-category .skill-category-input:focus {
+  background: var(--md-sys-color-surface);
+  border: 1px solid var(--md-sys-color-primary);
+}
+
+.skill-items-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-left: 16px;
+}
+
+.skill-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skill-item-input {
+  flex-grow: 1;
+  background-color: var(--md-sys-color-surface);
+}
+
+.remove-skill-item-btn .material-symbols-outlined {
+    font-size: 20px;
+}
+
+.add-skill-item-btn {
+    align-self: flex-start;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+
 /* Generate Section */
 .generate-section {
   display: flex;
@@ -669,4 +719,65 @@ body {
 
 .markdown-content br {
   margin: 4px 0;
+} 
+
+/* Print-specific Styles */
+@media print {
+  /* Hide non-essential elements */
+  .app-bar,
+  .form-panel,
+  .preview-header,
+  .dialog-backdrop,
+  .loading-overlay,
+  .toast-container,
+  .generate-section {
+    display: none !important;
+  }
+
+  /* Reset layout for printing */
+  body, .app-container, .main-content, .preview-panel, .preview-container {
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+    color: black !important;
+  }
+  
+  .preview-content {
+    overflow: visible !important;
+    padding: 0 !important;
+    color: black !important;
+  }
+  
+  .preview-placeholder {
+      display: none !important;
+  }
+  
+  /* Ensure colors and backgrounds from the preview are printed */
+  .html-preview-container, .svg-preview-container {
+    -webkit-print-color-adjust: exact !important;
+    color-adjust: exact !important;
+    background: white !important; /* Ensure background is white for printing */
+    box-shadow: none !important;
+  }
+  
+  /* The preview itself may need some adjustments */
+  .html-preview-container > div {
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  .svg-preview-container svg {
+      max-width: 100% !important;
+      height: auto !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 20mm;
+  }
 } 

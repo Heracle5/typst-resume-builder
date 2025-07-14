@@ -242,78 +242,42 @@ class App {
     }
 
     showHelp() {
-        const currentLang = i18n ? i18n.getCurrentLanguage() : 'zh-CN';
+        const content = `
+            <h2 data-i18n="dialog.help.gettingStarted.title"></h2>
+            <p data-i18n="dialog.help.gettingStarted.p1"></p>
+            <ol>
+                <li data-i18n="dialog.help.gettingStarted.li1" data-i18n-unsafe-html></li>
+                <li>
+                    <strong data-i18n="dialog.help.gettingStarted.li2"></strong>
+                    <ul>
+                        <li data-i18n="dialog.help.gettingStarted.li2_1"></li>
+                        <li data-i18n="dialog.help.gettingStarted.li2_2" data-i18n-unsafe-html></li>
+                        <li data-i18n="dialog.help.gettingStarted.li2_3" data-i18n-unsafe-html></li>
+                    </ul>
+                </li>
+                <li data-i18n="dialog.help.gettingStarted.li3" data-i18n-unsafe-html></li>
+                <li data-i18n="dialog.help.gettingStarted.li4" data-i18n-unsafe-html></li>
+            </ol>
+            <h2 data-i18n="dialog.help.offline.title"></h2>
+            <p data-i18n="dialog.help.offline.p1" data-i18n-unsafe-html></p>
+            <p data-i18n="dialog.help.offline.p2" data-i18n-unsafe-html></p>
+            <h2 data-i18n="dialog.help.privacy.title"></h2>
+            <p data-i18n="dialog.help.privacy.p1" data-i18n-unsafe-html></p>
+            <h2 data-i18n="dialog.help.shortcuts.title"></h2>
+            <ul>
+                <li data-i18n="dialog.help.shortcuts.li1" data-i18n-unsafe-html></li>
+                <li data-i18n="dialog.help.shortcuts.li2" data-i18n-unsafe-html></li>
+                <li data-i18n="dialog.help.shortcuts.li3" data-i18n-unsafe-html></li>
+            </ul>
+        `;
         
-        const helpContent = {
-            'zh-CN': `
-# Typst 简历生成器 使用帮助
-
-## 快速开始
-1. 填写个人信息（姓名为必填项）
-2. 添加教育背景、工作经历或项目经历
-3. 点击"生成简历"按钮
-4. 在右侧预览并下载PDF
-
-## AI 助手功能
-- **API Key**: 输入您的 Gemini API Key 启用 AI 功能
-- **生成示例数据**: 快速生成完整的简历模板
-- **润色内容**: 使用 AI 优化您的简历描述
-
-## 快捷键
-- Ctrl/Cmd + G: 生成简历
-- Ctrl/Cmd + D: 下载PDF
-- Ctrl/Cmd + L: 切换语言
-- Ctrl/Cmd + T: 切换主题
-- ESC: 关闭对话框
-
-## 技巧
-- 数据会自动保存到本地存储
-- 支持多页简历
-- 可以为每个经历项目单独润色
-- 支持响应式设计，适配各种设备
-            `,
-            'en-US': `
-# Typst Resume Generator Help
-
-## Quick Start
-1. Fill in personal information (name is required)
-2. Add education, work experience, or projects
-3. Click "Generate Resume" button
-4. Preview and download PDF on the right panel
-
-## AI Assistant Features
-- **API Key**: Enter your Gemini API Key to enable AI features
-- **Generate Sample Data**: Quickly create a complete resume template
-- **Enhance Content**: Use AI to optimize your resume descriptions
-
-## Keyboard Shortcuts
-- Ctrl/Cmd + G: Generate resume
-- Ctrl/Cmd + D: Download PDF
-- Ctrl/Cmd + L: Switch language
-- Ctrl/Cmd + T: Toggle theme
-- ESC: Close dialogs
-
-## Tips
-- Data is automatically saved to local storage
-- Supports multi-page resumes
-- Individual item enhancement available
-- Responsive design for all devices
-            `
-        };
-        
-        this.showInfoDialog(
-            currentLang === 'zh-CN' ? '使用帮助' : 'Help',
-            helpContent[currentLang]
-        );
+        this.showInfoDialog(i18n.t('dialog.help.title'), content);
     }
 
-    showInfoDialog(title, content) {
+    showInfoDialog(title, htmlContent) {
         // Create modal dialog for help/info
         const backdrop = document.createElement('div');
         backdrop.className = 'dialog-backdrop show';
-        
-        // Convert markdown to HTML
-        const htmlContent = this.parseMarkdown(content);
         
         backdrop.innerHTML = `
             <div class="dialog" style="max-width: 600px; max-height: 80vh; overflow-y: auto;">
@@ -330,6 +294,16 @@ class App {
         `;
 
         document.body.appendChild(backdrop);
+
+        // This is key, translate the newly added elements.
+        if (window.i18n && typeof i18n.translateElement === 'function') {
+            i18n.translateElement(backdrop);
+        }
+
+        backdrop.querySelectorAll('a').forEach(a => {
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+        });
 
         // Setup close handlers
         const closeBtn = backdrop.querySelector('.close-dialog');
@@ -351,45 +325,6 @@ class App {
             }
         };
         document.addEventListener('keydown', escapeHandler);
-    }
-
-    parseMarkdown(markdown) {
-        if (!markdown) return '';
-        
-        let html = markdown
-            // Headers
-            .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-            .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-            .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-            
-            // Bold and italic
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\*(.*?)\*/g, '<em>$1</em>')
-            
-            // Lists
-            .replace(/^\d+\. (.*$)/gim, '<li>$1</li>')
-            .replace(/^- (.*$)/gim, '<li>$1</li>')
-            
-            // Code
-            .replace(/`(.*?)`/g, '<code>$1</code>')
-            
-            // Line breaks
-            .replace(/\n\n/g, '</p><p>')
-            .replace(/\n/g, '<br>');
-        
-        // Wrap in paragraphs
-        html = '<p>' + html + '</p>';
-        
-        // Fix list formatting
-        html = html.replace(/<p><li>/g, '<ul><li>');
-        html = html.replace(/<\/li><\/p>/g, '</li></ul>');
-        html = html.replace(/<\/li><p><li>/g, '</li><li>');
-        
-        // Remove empty paragraphs
-        html = html.replace(/<p><\/p>/g, '');
-        html = html.replace(/<p><br><\/p>/g, '');
-        
-        return html;
     }
 
     closeAllDialogs() {

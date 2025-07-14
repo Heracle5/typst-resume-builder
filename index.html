@@ -139,6 +139,10 @@
                                 <label for="gemini-api-key" data-i18n="ai.apikey">Gemini API Key</label>
                                 <input type="password" id="gemini-api-key" data-i18n-placeholder="ai.apikey.placeholder">
                             </div>
+                            <div class="input-group">
+                                <label for="job-description" data-i18n="ai.job_description">职位描述 (可选)</label>
+                                <textarea id="job-description" rows="5" data-i18n-placeholder="ai.job_description.placeholder"></textarea>
+                            </div>
                             <div class="action-buttons">
                                 <button class="button-outlined" id="generate-sample">
                                     <span class="material-symbols-outlined">shuffle</span>
@@ -308,14 +312,13 @@
                                 <span class="material-symbols-outlined">psychology</span>
                                 <span data-i18n="skills.title">技能特长</span>
                             </h2>
+                            <button class="icon-button add-btn" data-section="skills">
+                                <span class="material-symbols-outlined">add</span>
+                            </button>
                         </div>
                         <div class="card-content">
-                            <div class="input-group">
-                                <label for="skills">
-                                    <i class="fas fa-cogs"></i>
-                                    <span data-i18n="skills.list">技能列表</span>
-                                </label>
-                                <textarea id="skills" rows="4" data-i18n-placeholder="skills.placeholder"></textarea>
+                            <div class="items-container" id="skills-items">
+                                <!-- Skill categories will be added here -->
                             </div>
                         </div>
                     </div>
@@ -371,6 +374,10 @@
                     <button class="language-option" data-lang="en-US">
                         <span>🇺🇸</span>
                         <span data-i18n="dialog.language.english">English</span>
+                    </button>
+                    <button class="language-option" data-lang="ja-JP">
+                        <span>🇯🇵</span>
+                        <span data-i18n="dialog.language.japanese">日本語</span>
                     </button>
                 </div>
             </div>
